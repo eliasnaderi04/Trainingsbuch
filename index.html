@@ -17,7 +17,6 @@
   --bg:#12151a; --surface:#1b2027; --surface2:#262c35; --line:#343c47;
   --ink:#eef1f4; --muted:#9aa5b1; --faint:#6f7a87;
   --chalk:#eef1f4; --on-chalk:#12151a;
-  --d-torso:#e5484d; --d-limbs:#3e8fe8; --d-ober:#e9b949;
   --good:#3fb68b; --danger:#ff7b72;
   --display:"DIN Condensed","Roboto Condensed","sans-serif-condensed","Arial Narrow",sans-serif;
   --body:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
@@ -60,7 +59,6 @@ h2{font:700 21px/1.1 var(--display);letter-spacing:.05em;text-transform:uppercas
 /* Scheibe: das wiederkehrende Zeichen für Trainingstage */
 .plate{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:50%;color:var(--on-chalk);font:700 22px/1 var(--display);padding-top:2px;box-shadow:inset 0 0 0 3px rgba(0,0,0,.18)}
 .plate.s{width:26px;height:26px;font-size:15px;box-shadow:none}
-.torso{background:var(--d-torso)}.limbs{background:var(--d-limbs)}.ober{background:var(--d-ober)}
 .dot{flex:none;display:inline-block;width:12px;height:12px;border-radius:50%}
 
 /* Trainingsstart */
@@ -180,6 +178,8 @@ input[type=date].input{-webkit-appearance:none;appearance:none;min-width:0}
 .gr input[type=color]::-webkit-color-swatch-wrapper{padding:0}
 .gr input[type=color]::-webkit-color-swatch{border:0;border-radius:10px}
 .gr input[type=color]::-moz-color-swatch{border:0;border-radius:10px}
+.gr.d{grid-template-columns:52px 1fr 40px 40px;gap:6px}
+.icon.off{visibility:hidden}
 .radio{position:absolute;opacity:0;pointer-events:none}
 #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--tabbar) + 14px + env(safe-area-inset-bottom,0px));z-index:40;display:flex;align-items:center;gap:14px;width:max-content;max-width:calc(100% - 32px);padding:12px 16px;border-radius:11px;background:var(--chalk);color:var(--on-chalk);font-size:15px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.45)}
 #toast button{text-decoration:underline;font-weight:700;min-height:28px}
@@ -201,8 +201,6 @@ input[type=date].input{-webkit-appearance:none;appearance:none;min-width:0}
 'use strict';
 /* ---------- Grundlagen ---------- */
 const KEY='trainingsbuch.v1';
-const DAY_IDS=['torso','limbs','ober'];
-const DAYS={torso:{name:'Torso',letter:'T'},limbs:{name:'Limbs',letter:'L'},ober:{name:'Oberkörper',letter:'O'}};
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
@@ -222,6 +220,8 @@ const num=(n,dec=2)=>n==null?'–':n.toLocaleString('de-DE',{maximumFractionDigi
 const parseNum=v=>{const s=String(v).trim().replace(',','.');if(s==='')return null;const n=parseFloat(s);return isFinite(n)&&n>=0?n:null};
 
 /* ---------- Daten ---------- */
+const DEFAULT_DAYS=[['torso','Torso','#e5484d'],['limbs','Limbs','#3e8fe8'],['ober','Oberkörper','#e9b949']];
+const DAY_COLORS=['#3fb68b','#a58be6','#f0894a','#eef1f4','#f5a6d0','#4d9de0'];
 const DEFAULT_GROUPS=[['brust','Brust','#ef6461'],['ruecken','Rücken','#4d9de0'],['schultern','Schultern','#e9b44c'],['bizeps','Bizeps','#7f6be0'],['trizeps','Trizeps','#f5a6d0'],['beine','Beine','#1f9c8f'],['bauch','Bauch','#f0894a']];
 const EXAMPLES=[
  ['Bankdrücken','brust',['torso']],['Rudern am Kabel','ruecken',['torso']],['Latzug','ruecken',['torso']],['Beinheben','bauch',['torso']],
@@ -229,7 +229,8 @@ const EXAMPLES=[
  ['Schrägbankdrücken','brust',['ober']],['Schulterdrücken','schultern',['ober']],['Klimmzüge','ruecken',['ober']],['Seitheben','schultern',['ober']]];
 
 function seed(){return{
-  version:1,
+  version:2,
+  days:DEFAULT_DAYS.map(([id,name,color])=>({id,name,color})),
   groups:DEFAULT_GROUPS.map(([id,name,color])=>({id,name,color})),
   exercises:EXAMPLES.map(([name,groupId,days])=>({id:uid(),name,groupId,days,example:true})),
   workouts:[],weights:[],goal:80,activeId:null,lastBackup:null}}
@@ -242,21 +243,27 @@ function validate(d){
   const n0=v=>v===null||(typeof v==='number'&&isFinite(v)&&v>=0);
   const groups=d.groups.map(g=>{if(!str(g?.id)||!str(g?.name)||!/^#[0-9a-f]{6}$/i.test(g.color))bad('Eine Muskelgruppe in der Datei ist fehlerhaft.');return{id:g.id,name:g.name,color:g.color}});
   const gids=new Set(groups.map(g=>g.id));
+  // Stände von vor Version 2 kennen keine Trainingstage: Sie erhalten die alten drei mit denselben IDs.
+  const rawDays=Array.isArray(d.days)?d.days:DEFAULT_DAYS.map(([id,name,color])=>({id,name,color}));
+  const days=rawDays.map(x=>{if(typeof x?.id!=='string'||!/^[\w-]+$/.test(x.id)||!str(x.name)||!/^#[0-9a-f]{6}$/i.test(x.color))bad('Ein Trainingstag in der Datei ist fehlerhaft.');
+    const o={id:x.id,name:x.name,color:x.color};if(x.archived)o.archived=true;return o});
+  if(!days.some(x=>!x.archived))bad('Die Datei enthält keinen aktiven Trainingstag.');
+  const dids=new Set(days.map(x=>x.id));
   const exercises=d.exercises.map(e=>{
     if(!str(e?.id)||!str(e?.name))bad('Eine Übung in der Datei ist fehlerhaft.');
     if(!e.deleted&&!gids.has(e.groupId))bad(`Die Übung „${e.name}“ verweist auf eine unbekannte Muskelgruppe.`);
-    const o={id:e.id,name:e.name,groupId:e.groupId,days:(Array.isArray(e.days)?e.days:[]).filter(x=>DAYS[x])};
+    const o={id:e.id,name:e.name,groupId:e.groupId,days:(Array.isArray(e.days)?e.days:[]).filter(x=>dids.has(x))};
     if(e.example)o.example=true;if(e.deleted)o.deleted=true;return o});
   const eids=new Set(exercises.map(e=>e.id));
   const workouts=d.workouts.map(w=>{
-    if(!str(w?.id)||!isDate(w.date)||!DAYS[w.type]||!Array.isArray(w.items))bad('Ein Training in der Datei ist fehlerhaft.');
+    if(!str(w?.id)||!isDate(w.date)||!dids.has(w.type)||!Array.isArray(w.items))bad('Ein Training in der Datei ist fehlerhaft.');
     return{id:w.id,date:w.date,type:w.type,items:w.items.map(it=>{
       if(!eids.has(it?.exerciseId)||!Array.isArray(it.sets))bad(`Das Training vom ${w.date} verweist auf eine unbekannte Übung.`);
       return{exerciseId:it.exerciseId,sets:it.sets.map(s=>{if(!n0(s?.reps)||!n0(s?.kg))bad(`Das Training vom ${w.date} enthält ungültige Sätze.`);return{reps:s.reps,kg:s.kg}})}})}});
   const weights=d.weights.map(x=>{if(!str(x?.id)||!isDate(x.date)||typeof x.kg!=='number'||!isFinite(x.kg)||x.kg<=0)bad('Ein Gewichtseintrag in der Datei ist fehlerhaft.');return{id:x.id,date:x.date,kg:x.kg}});
   const goal=typeof d.goal==='number'&&d.goal>0?d.goal:null;
   const activeId=workouts.some(w=>w.id===d.activeId)?d.activeId:null;
-  return{version:1,groups,exercises,workouts,weights,goal,activeId,lastBackup:isDate(d.lastBackup)?d.lastBackup:null};
+  return{version:2,days,groups,exercises,workouts,weights,goal,activeId,lastBackup:isDate(d.lastBackup)?d.lastBackup:null};
 }
 
 function load(){
@@ -281,6 +288,19 @@ window.addEventListener('storage',e=>{if(e.key===KEY){S=load();render()}});
 
 /* ---------- Abfragen ---------- */
 const ex=id=>S.exercises.find(e=>e.id===id);
+const dayOf=id=>S.days.find(d=>d.id===id)||{id,name:'Unbekannter Tag',color:'#6f7a87'};
+const liveDays=()=>S.days.filter(d=>!d.archived);
+const dayIds=()=>liveDays().map(d=>d.id);
+const dn=id=>esc(dayOf(id).name);
+const inkOn=hex=>{const c=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return .2126*c[0]+.7152*c[1]+.0722*c[2]>.18?'#12151a':'#f4f6f8'};
+function letter(id){ // Anfangsbuchstabe; teilen sich Tage einen, kommt ein zweites Zeichen dazu (Push/Pull: Ph, Pl).
+  const name=dayOf(id).name.trim(),first=s=>(Array.from(s)[0]||'?').toUpperCase();
+  if(!S.days.some(x=>x.id!==id&&first(x.name.trim())===first(name)))return first(name);
+  const words=name.split(/\s+/);
+  return words.length>1?first(words[0])+first(words.at(-1)):first(name)+Array.from(name).at(-1);
+}
+const le=id=>esc(letter(id));
+const plate=(id,small)=>{const c=dayOf(id).color;return `<span class="plate ${small?'s':''}" style="background:${c};color:${inkOn(c)}">${le(id)}</span>`};
 const liveEx=()=>S.exercises.filter(e=>!e.deleted);
 const grp=id=>S.groups.find(g=>g.id===id)||{id:'',name:'Ohne Gruppe',color:'#6f7a87'};
 const byName=(a,b)=>a.name.localeCompare(b.name,'de');
@@ -309,7 +329,8 @@ function bestBefore(exId,cur){
 }
 function nextType(before){
   const prev=doneW().filter(w=>!before||w.date<=before).sort(byDateDesc)[0];
-  return prev?DAY_IDS[(DAY_IDS.indexOf(prev.type)+1)%3]:'torso';
+  const ids=dayIds();
+  return prev?ids[(ids.indexOf(prev.type)+1)%ids.length]:ids[0]; // Ein gelöschter letzter Tag beginnt wieder beim ersten.
 }
 function planItems(type,cur){
   return liveEx().filter(e=>e.days.includes(type)).map(e=>{
@@ -379,14 +400,15 @@ function viewHome(){
   const stale=all.length&&(!S.lastBackup||dayNum(t)-dayNum(S.lastBackup)>=14);
   return `<div class="head"><div><h1>Training</h1><p class="sub">${esc(fd(t,{weekday:'long',day:'numeric',month:'long'}))}</p></div>
     <button class="link" data-a="data">Daten &amp; Backup</button></div>
-  <div class="stack">${DAY_IDS.map(id=>{
+  <div class="stack">${dayIds().map(id=>{
     const n=liveEx().filter(e=>e.days.includes(id)).length;
-    return `<button class="start ${id===next?'next':''}" data-a="start" data-t="${id}"><span class="plate ${id}">${DAYS[id].letter}</span>
-     <span class="grow"><b>${DAYS[id].name}</b><span class="meta">${n} ${n===1?'Übung':'Übungen'}</span></span>${id===next?'<span class="tag">Als Nächstes</span>':''}</button>`}).join('')}</div>
+    return `<button class="start ${id===next?'next':''}" data-a="start" data-t="${id}">${plate(id)}
+     <span class="grow"><b>${dn(id)}</b><span class="meta">${n} ${n===1?'Übung':'Übungen'}</span></span>${id===next?'<span class="tag">Als Nächstes</span>':''}</button>`}).join('')}
+    <button class="link" style="align-self:flex-start" data-a="days">Trainingstage bearbeiten</button></div>
   ${stale?`<button class="empty" style="text-align:left;color:var(--ink)" data-a="data">${S.lastBackup?`Letztes Backup am ${esc(dShort(S.lastBackup))}.`:'Noch kein Backup erstellt.'} Jetzt sichern</button>`:''}
   <div class="stack"><h2>Letzte Trainings</h2>
-  ${hist.length?`<div class="list">${hist.map(w=>`<button class="item" data-a="open" data-id="${esc(w.id)}"><span class="plate s ${w.type}">${DAYS[w.type].letter}</span>
-    <span class="grow"><span class="t">${esc(dLong(w.date))} · ${DAYS[w.type].name}</span><span class="m">${w.items.filter(i=>i.sets.some(complete)).length} Übungen · ${setCount(w)} Sätze · ${num(Math.round(volume(w)))} kg</span></span></button>`).join('')}</div>
+  ${hist.length?`<div class="list">${hist.map(w=>`<button class="item" data-a="open" data-id="${esc(w.id)}">${plate(w.type,true)}
+    <span class="grow"><span class="t">${esc(dLong(w.date))} · ${dn(w.type)}</span><span class="m">${w.items.filter(i=>i.sets.some(complete)).length} Übungen · ${setCount(w)} Sätze · ${num(Math.round(volume(w)))} kg</span></span></button>`).join('')}</div>
     ${all.length>6&&!U.histAll?'<button class="link" data-a="histAll">Alle anzeigen</button>':''}`
   :'<p class="empty">Noch kein Training eingetragen. Wähle oben deinen Trainingstag, dann erscheinen hier deine Einheiten.</p>'}</div>`;
 }
@@ -399,11 +421,11 @@ function suggestion(item,s,last){
 }
 function viewEditor(w){
   const anyDone=hasSets(w);
-  return `<div class="head"><div class="grow"><h1>${DAYS[w.type].name}</h1><p class="sub">${esc(fd(w.date,{weekday:'long',day:'numeric',month:'long'}))}</p></div>
+  return `<div class="head"><div class="grow"><h1>${dn(w.type)}</h1><p class="sub">${esc(fd(w.date,{weekday:'long',day:'numeric',month:'long'}))}</p></div>
     <button class="btn small primary" data-a="finish">Fertig</button></div>
   <div class="stack">
     <label class="f">Datum<input class="input" type="date" id="w-date" data-in="wdate" value="${w.date}"></label>
-    <div class="seg" role="group" aria-label="Trainingsart">${DAY_IDS.map(id=>`<button data-a="wtype" data-t="${id}" class="${w.type===id?'on':''}">${DAYS[id].name}</button>`).join('')}</div>
+    <div class="wrap" role="group" aria-label="Trainingstag">${[...new Set([...dayIds(),w.type])].map(id=>`<button class="chip ${w.type===id?'on':''}" data-a="wtype" data-t="${id}">${dn(id)}</button>`).join('')}</div>
   </div>
   ${w.items.map((it,i)=>{
     const e=ex(it.exerciseId),last=lastTime(it.exerciseId,w),best=bestBefore(it.exerciseId,w);
@@ -461,7 +483,7 @@ function viewExercises(){
   list=[...list].sort(U.exSort==='group'?(a,b)=>gi(a.groupId)-gi(b.groupId)||byName(a,b):byName);
   const row=e=>{const h=exHistory(e.id),best=h.length?Math.max(...h.map(x=>x.weight)):null;
     return `<button class="item" data-a="exEdit" data-id="${esc(e.id)}"><i class="dot" style="background:${grp(e.groupId).color}"></i>
-    <span class="grow"><span class="t">${esc(e.name)}</span><span class="m">${esc(grp(e.groupId).name)}${e.days.length?' · '+e.days.map(d=>DAYS[d].name).join(', '):' · keinem Tag zugeordnet'}${e.example?' · Beispiel':''}</span></span>
+    <span class="grow"><span class="t">${esc(e.name)}</span><span class="m">${esc(grp(e.groupId).name)}${e.days.length?' · '+e.days.map(d=>dn(d)).join(', '):' · keinem Tag zugeordnet'}${e.example?' · Beispiel':''}</span></span>
     ${best?`<span class="v">${num(best)} kg</span>`:''}</button>`};
   let body;
   if(!list.length)body='<p class="empty">Keine Übung passt zu diesem Filter.</p>';
@@ -473,7 +495,7 @@ function viewExercises(){
   <button class="btn wide primary" data-a="exNew">+ Neue Übung</button>
   <div class="stack">
    <div class="chips" aria-label="Nach Muskelgruppe filtern"><button class="chip ${U.exGroup==='all'?'on':''}" data-a="exGroup" data-id="all">Alle</button>${S.groups.map(g=>`<button class="chip ${U.exGroup===g.id?'on':''}" data-a="exGroup" data-id="${esc(g.id)}"><i class="dot" style="background:${g.color}"></i>${esc(g.name)}</button>`).join('')}</div>
-   <div class="chips" aria-label="Nach Trainingstag filtern"><button class="chip ${U.exDay==='all'?'on':''}" data-a="exDay" data-id="all">Alle Tage</button>${DAY_IDS.map(d=>`<button class="chip ${U.exDay===d?'on':''}" data-a="exDay" data-id="${d}">${DAYS[d].name}</button>`).join('')}</div>
+   <div class="chips" aria-label="Nach Trainingstag filtern"><button class="chip ${U.exDay==='all'?'on':''}" data-a="exDay" data-id="all">Alle Tage</button>${dayIds().map(d=>`<button class="chip ${U.exDay===d?'on':''}" data-a="exDay" data-id="${d}">${dn(d)}</button>`).join('')}</div>
    <div class="seg" role="group" aria-label="Sortierung"><button data-a="exSort" data-id="group" class="${U.exSort==='group'?'on':''}">Nach Muskelgruppe</button><button data-a="exSort" data-id="name" class="${U.exSort==='name'?'on':''}">A–Z</button></div>
   </div>
   ${body}
@@ -485,7 +507,7 @@ function exForm(e){
   openSheet(`<h2>${e?'Übung bearbeiten':'Neue Übung'}</h2>
    <label class="f">Name<input class="input" id="ex-name" maxlength="60" autocomplete="off" value="${esc(e?.name||'')}"></label>
    <div class="stack"><span class="sub">Muskelgruppe</span><div class="wrap" id="ex-groups">${S.groups.map(x=>`<button type="button" class="chip ${x.id===g?'on':''}" data-a="exPickG" data-id="${esc(x.id)}" aria-pressed="${x.id===g}"><i class="dot" style="background:${x.color}"></i>${esc(x.name)}</button>`).join('')}</div></div>
-   <div class="stack"><span class="sub">Trainingstage</span><div class="wrap" id="ex-days">${DAY_IDS.map(d=>`<button type="button" class="chip ${days.includes(d)?'on':''}" data-a="exPickD" data-id="${d}" aria-pressed="${days.includes(d)}">${DAYS[d].name}</button>`).join('')}</div></div>
+   <div class="stack"><span class="sub">Trainingstage</span><div class="wrap" id="ex-days">${dayIds().map(d=>`<button type="button" class="chip ${days.includes(d)?'on':''}" data-a="exPickD" data-id="${d}" aria-pressed="${days.includes(d)}">${dn(d)}</button>`).join('')}</div></div>
    <p class="err" id="ex-err" hidden></p>
    <button class="btn wide primary" data-a="exSave" data-id="${e?esc(e.id):''}">Speichern</button>
    ${e?`<button class="btn wide" data-a="exProg" data-id="${esc(e.id)}">Fortschritt ansehen</button><button class="btn wide danger" data-a="exDel" data-id="${esc(e.id)}">Übung löschen</button>`:''}
@@ -496,6 +518,16 @@ function groupsSheet(){
    <div class="stack">${S.groups.map(g=>`<div class="gr"><input type="color" aria-label="Farbe von ${esc(g.name)}" value="${g.color}" data-in="gcolor" data-id="${esc(g.id)}"><input class="input" aria-label="Name" maxlength="30" value="${esc(g.name)}" data-in="gname" data-id="${esc(g.id)}"><button class="icon" data-a="gDel" data-id="${esc(g.id)}" aria-label="${esc(g.name)} löschen">×</button></div>`).join('')}</div>
    <p class="err" id="g-err" hidden></p>
    <button class="btn wide" data-a="gAdd">+ Muskelgruppe</button>`);
+}
+function daysSheet(){
+  const live=liveDays(),old=S.days.filter(d=>d.archived);
+  openSheet(`<div class="sheet-x"><h2>Trainingstage</h2><button class="btn small" data-a="close">Fertig</button></div>
+   <p class="sub" style="font-size:15px">Die Reihenfolge bestimmt, welcher Tag als Nächstes vorgeschlagen wird. Ein neuer Name gilt auch für frühere Trainings.</p>
+   <div class="stack">${live.map((d,i)=>`<div class="gr d"><input type="color" aria-label="Farbe von ${esc(d.name)}" value="${d.color}" data-in="dcolor" data-id="${d.id}"><input class="input" aria-label="Name" maxlength="24" value="${esc(d.name)}" data-in="dname" data-id="${d.id}"><button class="icon ${i?'':'off'}" data-a="dUp" data-id="${d.id}" aria-label="${esc(d.name)} nach oben">↑</button><button class="icon" data-a="dDel" data-id="${d.id}" aria-label="${esc(d.name)} löschen">×</button></div>`).join('')}</div>
+   <p class="err" id="d-err" hidden></p>
+   <button class="btn wide" data-a="dAdd">+ Trainingstag</button>
+   <p class="sub" style="font-size:15px">Welche Übungen zu einem Tag gehören, legst du im Tab Übungen fest.</p>
+   ${old.length?`<div class="stack"><h2>Frühere Trainingstage</h2><div class="list">${old.map(d=>`<div class="item" style="min-height:54px">${plate(d.id,true)}<span class="grow t">${esc(d.name)}</span><button class="btn small" data-a="dRestore" data-id="${d.id}">Zurückholen</button></div>`).join('')}</div></div>`:''}`);
 }
 function pickerSheet(){
   const w=active(),used=new Set(w.items.map(i=>i.exerciseId));
@@ -671,15 +703,16 @@ function viewCalendar(){
   const inWeek=done.filter(w=>{const n=dayNum(w.date);return n>=ws&&n<ws+7}).length;
   const inMonth=done.filter(w=>w.date.startsWith(mk)).length,st=streak();
   const prefix=`${y}-${pad(m+1)}`;
-  const counts=Object.fromEntries(DAY_IDS.map(d=>[d,done.filter(w=>w.type===d&&w.date.startsWith(prefix)).length]));
-  const cols={torso:'var(--d-torso)',limbs:'var(--d-limbs)',ober:'var(--d-ober)'};
+  const counts=Object.fromEntries(S.days.map(d=>[d.id,done.filter(w=>w.type===d.id&&w.date.startsWith(prefix)).length]));
+  const legend=S.days.filter(d=>!d.archived||counts[d.id]).map(d=>d.id);
   let cells='';
   for(let i=0;i<off;i++)cells+='<span></span>';
   for(let i=0;i<len;i++){
     const date=dNumStr(first+i),day=done.filter(w=>w.date===date);
-    const bg=day.length===1?cols[day[0].type]:day.length>1?`linear-gradient(90deg,${cols[day[0].type]} 50%,${cols[day[1].type]} 50%)`:'';
-    const name=`${i+1}. ${day.length?day.map(w=>DAYS[w.type].name).join(' und '):'kein Training'}`;
-    cells+=`<button class="day ${day.length?'has':''} ${date===t?'today':''}" data-a="calDay" data-date="${date}" aria-label="${esc(name)}"><span class="num" ${bg?`style="background:${bg}"`:''}>${i+1}</span>${day.length?`<span class="ty">${day.map(w=>DAYS[w.type].letter).join('+')}</span>`:''}</button>`;
+    const bg=day.length===1?dayOf(day[0].type).color:day.length>1?`linear-gradient(90deg,${dayOf(day[0].type).color} 50%,${dayOf(day[1].type).color} 50%)`:'';
+    const ink=day.length===1?inkOn(bg):'#12151a';
+    const name=`${i+1}. ${day.length?day.map(w=>dayOf(w.type).name).join(' und '):'kein Training'}`;
+    cells+=`<button class="day ${day.length?'has':''} ${date===t?'today':''}" data-a="calDay" data-date="${date}" aria-label="${esc(name)}"><span class="num" ${bg?`style="background:${bg};color:${ink}"`:''}>${i+1}</span>${day.length?`<span class="ty">${day.map(w=>le(w.type)).join('+')}</span>`:''}</button>`;
   }
   const label=utc(`${y}-${pad(m+1)}-01`).toLocaleDateString('de-DE',{timeZone:'UTC',month:'long',year:'numeric'});
   return `<div class="head"><h1>Kalender</h1></div>
@@ -690,7 +723,7 @@ function viewCalendar(){
   </div>
   <div class="cal-h"><button class="icon" data-a="calMove" data-d="-1" aria-label="Voriger Monat">‹</button><button class="mon" data-a="calNow" aria-label="${esc(label)}, zurück zum aktuellen Monat">${esc(label)}</button><button class="icon" data-a="calMove" data-d="1" aria-label="Nächster Monat">›</button></div>
   <div class="cal">${['Mo','Di','Mi','Do','Fr','Sa','So'].map(d=>`<span class="wd">${d}</span>`).join('')}${cells}</div>
-  <div class="stack">${DAY_IDS.map(d=>`<div class="row"><span class="plate s ${d}">${DAYS[d].letter}</span><span class="grow">${DAYS[d].name}</span><span class="sub">${counts[d]}× im ${esc(utc(`${y}-${pad(m+1)}-01`).toLocaleDateString('de-DE',{timeZone:'UTC',month:'long'}))}</span></div>`).join('')}</div>`;
+  <div class="stack">${legend.map(d=>`<div class="row">${plate(d,true)}<span class="grow">${dn(d)}</span><span class="sub">${counts[d]}× im ${esc(utc(`${y}-${pad(m+1)}-01`).toLocaleDateString('de-DE',{timeZone:'UTC',month:'long'}))}</span></div>`).join('')}</div>`;
 }
 
 /* ---------- Daten ---------- */
@@ -745,7 +778,7 @@ const A={
     if(partial)ask({title:'Unvollständige Sätze',text:`${partial} ${partial===1?'Satz hat':'Sätze haben'} nur Gewicht oder nur Wiederholungen. Beim Beenden werden sie verworfen.`,ok:'Verwerfen und beenden'},finishNow);
     else finishNow();
   },
-  delWorkout(){const w=active();ask({title:'Training löschen?',text:`${dLong(w.date)}, ${DAYS[w.type].name}: ${setCount(w)} Sätze werden endgültig gelöscht.`,ok:'Training löschen'},()=>{
+  delWorkout(){const w=active();ask({title:'Training löschen?',text:`${dLong(w.date)}, ${dayOf(w.type).name}: ${setCount(w)} Sätze werden endgültig gelöscht.`,ok:'Training löschen'},()=>{
     S.workouts=S.workouts.filter(x=>x!==w);S.activeId=null;U.tab=U.returnTab||'training';save();closeSheet();render(true);toast('Training gelöscht')})},
   pick:pickerSheet,
   pickEx(d){addToWorkout(d.id)},
@@ -809,6 +842,31 @@ const A={
     if(S.groups.length<2){e.textContent='Mindestens eine Muskelgruppe muss bleiben.';e.hidden=false;return}
     S.groups=S.groups.filter(x=>x.id!==d.id);if(U.exGroup===d.id)U.exGroup='all';save();groupsSheet();render();
   },
+  days:daysSheet,
+  dAdd(){
+    let name='Neuer Tag',k=2;
+    while(S.days.some(d=>d.name.toLowerCase()===name.toLowerCase()))name=`Neuer Tag ${k++}`;
+    const color=DAY_COLORS.find(c=>!S.days.some(d=>d.color===c))||DAY_COLORS[0];
+    S.days.push({id:uid(),name,color});save();daysSheet();render();
+    const f=[...document.querySelectorAll('[data-in=dname]')].at(-1);f.focus();f.select();
+  },
+  dUp(d){
+    const live=liveDays(),i=live.findIndex(x=>x.id===d.id);if(i<1)return;
+    const a=S.days.indexOf(live[i-1]),b=S.days.indexOf(live[i]);
+    [S.days[a],S.days[b]]=[S.days[b],S.days[a]];save();daysSheet();render();
+  },
+  dDel(d){
+    const e=$('#d-err'),day=dayOf(d.id);
+    if(liveDays().length<2){e.textContent='Mindestens ein Trainingstag muss bleiben.';e.hidden=false;return}
+    const n=S.workouts.filter(w=>w.type===d.id).length;
+    ask({title:'Trainingstag löschen?',text:n?`${day.name} verschwindet aus der Auswahl. ${n===1?'Das eingetragene Training bleibt':`Die ${n} eingetragenen Trainings bleiben`} erhalten, auch im Kalender. Du kannst den Tag später zurückholen.`:`${day.name} wird gelöscht. Die zugeordneten Übungen bleiben erhalten.`,ok:'Trainingstag löschen'},()=>{
+      S.exercises.forEach(x=>x.days=x.days.filter(y=>y!==d.id));
+      if(n)day.archived=true;else S.days=S.days.filter(x=>x.id!==d.id);
+      if(U.exDay===d.id)U.exDay='all';
+      save();daysSheet();render();toast('Trainingstag gelöscht');
+    });
+  },
+  dRestore(d){delete dayOf(d.id).archived;save();daysSheet();render()},
   metric(d){U.metric=d.id;render()},
   progRange(d){U.progRange=d.id;render()},
   wRange(d){U.wRange=d.id;render()},
@@ -852,7 +910,7 @@ const A={
     const day=S.workouts.filter(w=>w.date===d.date&&hasSets(w));
     if(day.length===1)return openWorkout(day[0].id);
     if(day.length>1)return openSheet(`<div class="sheet-x"><h2>${esc(dLong(d.date))}</h2><button class="btn small" data-a="close">Schließen</button></div>
-      <div class="list">${day.map(w=>`<button class="item" data-a="calOpen" data-id="${esc(w.id)}"><span class="plate s ${w.type}">${DAYS[w.type].letter}</span><span class="grow"><span class="t">${DAYS[w.type].name}</span><span class="m">${setCount(w)} Sätze</span></span></button>`).join('')}</div>
+      <div class="list">${day.map(w=>`<button class="item" data-a="calOpen" data-id="${esc(w.id)}">${plate(w.type,true)}<span class="grow"><span class="t">${dn(w.type)}</span><span class="m">${setCount(w)} Sätze</span></span></button>`).join('')}</div>
       <button class="btn wide" data-a="calNew" data-date="${d.date}">+ Weiteres Training</button>`);
     startWorkout(nextType(d.date),d.date);
   },
@@ -892,6 +950,13 @@ document.addEventListener('change',e=>{
   if(d.in==='prog'){U.progId=v;U.metric=null;render()}
   if(d.in==='gcolor'){grp(d.id).color=v;save();render()}
   if(d.in==='gname'){const n=v.trim();if(n){grp(d.id).name=n;save();render()}else e.target.value=grp(d.id).name}
+  if(d.in==='dcolor'){dayOf(d.id).color=v;save();render()}
+  if(d.in==='dname'){
+    const n=v.trim(),err=$('#d-err');
+    if(!n){e.target.value=dayOf(d.id).name;return}
+    if(S.days.some(x=>x.id!==d.id&&x.name.toLowerCase()===n.toLowerCase())){e.target.value=dayOf(d.id).name;err.textContent=`Den Namen ${n} gibt es schon.`;err.hidden=false;return}
+    err.hidden=true;dayOf(d.id).name=n;save();render();
+  }
   if(d.in==='import')importData(e.target);
 });
 
