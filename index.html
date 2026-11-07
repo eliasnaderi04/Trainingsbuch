@@ -182,6 +182,13 @@ input[type=date].input{-webkit-appearance:none;appearance:none;min-width:0}
 .gr input[type=color]::-moz-color-swatch{border:0;border-radius:10px}
 .gr.d{grid-template-columns:52px 1fr 40px 40px;gap:6px}
 .icon.off{visibility:hidden}
+.pl{display:grid;grid-template-columns:12px 1fr 40px 40px 40px 40px;gap:6px;align-items:center;min-height:58px;border-top:1px solid var(--line)}
+.pl:first-child{border-top:0}
+.pl .t{font-weight:600;overflow-wrap:anywhere;min-width:0}
+.pl .t small{display:block;color:var(--muted);font-weight:400;font-size:14px}
+.pl .icon{background:var(--surface2);color:var(--ink)}
+.pl .icon:disabled{opacity:.35}
+.pl .icon.off{visibility:hidden}
 .radio{position:absolute;opacity:0;pointer-events:none}
 #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--tabbar) + 14px + env(safe-area-inset-bottom,0px));z-index:40;display:flex;align-items:center;gap:14px;width:max-content;max-width:calc(100% - 32px);padding:12px 16px;border-radius:11px;background:var(--chalk);color:var(--on-chalk);font-size:15px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.45)}
 #toast button{text-decoration:underline;font-weight:700;min-height:28px}
@@ -230,12 +237,11 @@ const EXAMPLES=[
  ['Kniebeuge','beine',['limbs']],['Beinpresse','beine',['limbs']],['Beinbeuger','beine',['limbs']],['Bizepscurls','bizeps',['limbs']],['Trizepsdrücken am Kabel','trizeps',['limbs']],
  ['Schrägbankdrücken','brust',['ober']],['Schulterdrücken','schultern',['ober']],['Klimmzüge','ruecken',['ober']],['Seitheben','schultern',['ober']]];
 
-function seed(){return{
-  version:2,
+function seed(){return validate({
   days:DEFAULT_DAYS.map(([id,name,color])=>({id,name,color})),
   groups:DEFAULT_GROUPS.map(([id,name,color])=>({id,name,color})),
   exercises:EXAMPLES.map(([name,groupId,days])=>({id:uid(),name,groupId,days,example:true})),
-  workouts:[],weights:[],goal:80,activeId:null,lastBackup:null}}
+  workouts:[],weights:[],goal:80,activeId:null,lastBackup:null})}
 
 function validate(d){
   const bad=m=>{throw new Error(m)};
@@ -254,7 +260,7 @@ function validate(d){
   const exercises=d.exercises.map(e=>{
     if(!str(e?.id)||!str(e?.name))bad('Eine Übung in der Datei ist fehlerhaft.');
     if(!e.deleted&&!gids.has(e.groupId))bad(`Die Übung „${e.name}“ verweist auf eine unbekannte Muskelgruppe.`);
-    const o={id:e.id,name:e.name,groupId:e.groupId,days:(Array.isArray(e.days)?e.days:[]).filter(x=>dids.has(x))};
+    const o={id:e.id,name:e.name,groupId:e.groupId};
     if(e.example)o.example=true;if(e.deleted)o.deleted=true;return o});
   const eids=new Set(exercises.map(e=>e.id));
   const workouts=d.workouts.map(w=>{
@@ -263,9 +269,21 @@ function validate(d){
       if(!eids.has(it?.exerciseId)||!Array.isArray(it.sets))bad(`Das Training vom ${w.date} verweist auf eine unbekannte Übung.`);
       return{exerciseId:it.exerciseId,sets:it.sets.map(s=>{if(!n0(s?.reps)||!n0(s?.kg))bad(`Das Training vom ${w.date} enthält ungültige Sätze.`);return{reps:s.reps,kg:s.kg}})}})}});
   const weights=d.weights.map(x=>{if(!str(x?.id)||!isDate(x.date)||typeof x.kg!=='number'||!isFinite(x.kg)||x.kg<=0)bad('Ein Gewichtseintrag in der Datei ist fehlerhaft.');return{id:x.id,date:x.date,kg:x.kg}});
+  // Trainingspläne (ab Version 3): Reihenfolge und Satzzahl je Tag. Ältere Stände übernehmen die bisherige
+  // Zuordnung der Übungen in der alten Reihenfolge, mit der Satzzahl vom letzten Mal (sonst 3).
+  const live=new Set(exercises.filter(e=>!e.deleted).map(e=>e.id));
+  const lastCount=id=>{const w=[...workouts].sort((a,b)=>b.date.localeCompare(a.date)).find(w=>w.items.some(i=>i.exerciseId===id&&i.sets.some(s=>s.reps>0&&s.kg!=null)));
+    const n=w?w.items.filter(i=>i.exerciseId===id).flatMap(i=>i.sets).filter(s=>s.reps>0&&s.kg!=null).length:3;return Math.min(20,Math.max(1,n))};
+  days.forEach((day,k)=>{
+    const raw=rawDays[k].plan;
+    if(Array.isArray(raw)){const seen=new Set();day.plan=[];
+      for(const p of raw){if(!live.has(p?.exerciseId)||!Number.isInteger(p.sets)||p.sets<1||p.sets>20)bad('Ein Trainingsplan in der Datei ist fehlerhaft.');
+        if(!seen.has(p.exerciseId)){seen.add(p.exerciseId);day.plan.push({exerciseId:p.exerciseId,sets:p.sets})}}}
+    else day.plan=d.exercises.filter(e=>live.has(e.id)&&Array.isArray(e.days)&&e.days.includes(day.id)).map(e=>({exerciseId:e.id,sets:lastCount(e.id)}));
+  });
   const goal=typeof d.goal==='number'&&d.goal>0?d.goal:null;
   const activeId=workouts.some(w=>w.id===d.activeId)?d.activeId:null;
-  return{version:2,days,groups,exercises,workouts,weights,goal,activeId,lastBackup:isDate(d.lastBackup)?d.lastBackup:null};
+  return{version:3,days,groups,exercises,workouts,weights,goal,activeId,lastBackup:isDate(d.lastBackup)?d.lastBackup:null};
 }
 
 function load(){
@@ -290,7 +308,14 @@ window.addEventListener('storage',e=>{if(e.key===KEY){S=load();render()}});
 
 /* ---------- Abfragen ---------- */
 const ex=id=>S.exercises.find(e=>e.id===id);
-const dayOf=id=>S.days.find(d=>d.id===id)||{id,name:'Unbekannter Tag',color:'#6f7a87'};
+const dayOf=id=>S.days.find(d=>d.id===id)||{id,name:'Unbekannter Tag',color:'#6f7a87',plan:[]};
+const daysOf=exId=>liveDays().filter(d=>d.plan.some(p=>p.exerciseId===exId)).map(d=>d.id);
+const dropFromPlans=exId=>S.days.forEach(d=>d.plan=d.plan.filter(p=>p.exerciseId!==exId));
+function setPlanDays(exId,ids){
+  for(const d of liveDays()){const has=d.plan.some(p=>p.exerciseId===exId),want=ids.includes(d.id);
+    if(has&&!want)d.plan=d.plan.filter(p=>p.exerciseId!==exId);
+    if(!has&&want)d.plan.push({exerciseId:exId,sets:3})}
+}
 const liveDays=()=>S.days.filter(d=>!d.archived);
 const dayIds=()=>liveDays().map(d=>d.id);
 const dn=id=>esc(dayOf(id).name);
@@ -334,10 +359,8 @@ function nextType(before){
   const ids=dayIds();
   return prev?ids[(ids.indexOf(prev.type)+1)%ids.length]:ids[0]; // Ein gelöschter letzter Tag beginnt wieder beim ersten.
 }
-function planItems(type,cur){
-  return liveEx().filter(e=>e.days.includes(type)).map(e=>{
-    const l=lastTime(e.id,cur);
-    return{exerciseId:e.id,sets:Array.from({length:l?l.sets.length:3},()=>({reps:null,kg:null}))}});
+function planItems(type){
+  return dayOf(type).plan.filter(p=>ex(p.exerciseId)&&!ex(p.exerciseId).deleted).map(p=>({exerciseId:p.exerciseId,sets:Array.from({length:p.sets},()=>({reps:null,kg:null}))}));
 }
 function exHistory(id){
   const out=[];
@@ -403,10 +426,10 @@ function viewHome(){
   return `<div class="head"><div><h1>Training</h1><p class="sub">${esc(fd(t,{weekday:'long',day:'numeric',month:'long'}))}</p></div>
     <button class="link" data-a="data">Daten &amp; Backup</button></div>
   <div class="stack">${dayIds().map(id=>{
-    const n=liveEx().filter(e=>e.days.includes(id)).length;
+    const n=planItems(id).length;
     return `<button class="start ${id===next?'next':''}" data-a="start" data-t="${id}">${plate(id)}
      <span class="grow"><b>${dn(id)}</b><span class="meta">${n} ${n===1?'Übung':'Übungen'}</span></span>${id===next?'<span class="tag">Als Nächstes</span>':''}</button>`}).join('')}
-    <button class="link" style="align-self:flex-start" data-a="days">Trainingstage bearbeiten</button></div>
+    <div class="wrap"><button class="link" data-a="plans">Trainingspläne bearbeiten</button><button class="link" data-a="days">Trainingstage bearbeiten</button></div></div>
   ${stale?`<button class="empty" style="text-align:left;color:var(--ink)" data-a="data">${S.lastBackup?`Letztes Backup am ${esc(dShort(S.lastBackup))}.`:'Noch kein Backup erstellt.'} Jetzt sichern</button>`:''}
   <div class="stack"><h2>Letzte Trainings</h2>
   ${hist.length?`<div class="list">${hist.map(w=>`<button class="item" data-a="open" data-id="${esc(w.id)}">${plate(w.type,true)}
@@ -432,7 +455,7 @@ function viewEditor(w){
   ${w.items.map((it,i)=>{
     const e=ex(it.exerciseId),last=lastTime(it.exerciseId,w),best=bestBefore(it.exerciseId,w);
     return `<section class="ex" data-i="${i}">
-     <div class="ex-h"><i class="dot" style="background:${grp(e.groupId).color}"></i><h3>${esc(e.name)}</h3><button class="icon" data-a="rmItem" data-i="${i}" aria-label="${esc(e.name)} aus dem Training entfernen">×</button></div>
+     <div class="ex-h"><i class="dot" style="background:${grp(e.groupId).color}"></i><h3>${esc(e.name)}</h3><button class="icon" ${i?'':'hidden'} data-a="upItem" data-i="${i}" aria-label="${esc(e.name)} nach oben">↑</button><button class="icon" data-a="rmItem" data-i="${i}" aria-label="${esc(e.name)} aus dem Training entfernen">×</button></div>
      <p class="last">${last?`Letztes Mal, ${esc(dShort(last.date))}: ${esc(last.sets.map(s=>`${num(s.kg)} × ${s.reps}`).join(' · '))}`:'Noch keine Werte. Trag dein Startgewicht ein.'}</p>
      <div class="sets"><span class="h">Satz</span><span class="h">kg</span><span class="h">Wdh.</span><span></span><span></span>
       ${it.sets.map((s,j)=>{
@@ -447,6 +470,7 @@ function viewEditor(w){
      <button class="btn small" data-a="addSet" data-i="${i}">+ Satz</button></section>`}).join('')}
   ${w.items.length?'':'<p class="empty">Diesem Trainingstag sind noch keine Übungen zugeordnet. Füge unten welche hinzu.</p>'}
   <button class="btn wide" data-a="pick">+ Übung hinzufügen</button>
+  ${w.items.length?`<button class="btn wide" data-a="savePlan">Als Plan für ${dn(w.type)} speichern</button>`:''}
   <button class="btn wide primary" data-a="finish">Training beenden</button>
   ${anyDone?'<button class="btn wide danger" data-a="delWorkout">Training löschen</button>':''}`;
 }
@@ -480,12 +504,12 @@ function finishNow(){
 function viewExercises(){
   let list=liveEx();
   if(U.exGroup!=='all')list=list.filter(e=>e.groupId===U.exGroup);
-  if(U.exDay!=='all')list=list.filter(e=>e.days.includes(U.exDay));
+  if(U.exDay!=='all')list=list.filter(e=>daysOf(e.id).includes(U.exDay));
   const gi=id=>S.groups.findIndex(g=>g.id===id);
   list=[...list].sort(U.exSort==='group'?(a,b)=>gi(a.groupId)-gi(b.groupId)||byName(a,b):byName);
   const row=e=>{const h=exHistory(e.id),best=h.length?Math.max(...h.map(x=>x.weight)):null;
     return `<button class="item" data-a="exEdit" data-id="${esc(e.id)}"><i class="dot" style="background:${grp(e.groupId).color}"></i>
-    <span class="grow"><span class="t">${esc(e.name)}</span><span class="m">${esc(grp(e.groupId).name)}${e.days.length?' · '+e.days.map(d=>dn(d)).join(', '):' · keinem Tag zugeordnet'}${e.example?' · Beispiel':''}</span></span>
+    <span class="grow"><span class="t">${esc(e.name)}</span><span class="m">${esc(grp(e.groupId).name)}${daysOf(e.id).length?' · '+daysOf(e.id).map(d=>dn(d)).join(', '):' · keinem Tag zugeordnet'}${e.example?' · Beispiel':''}</span></span>
     ${best?`<span class="v">${num(best)} kg</span>`:''}</button>`};
   let body;
   if(!list.length)body='<p class="empty">Keine Übung passt zu diesem Filter.</p>';
@@ -505,7 +529,7 @@ function viewExercises(){
 }
 function exForm(e){
   const g=e?.groupId||(U.exGroup!=='all'?U.exGroup:S.groups[0]?.id);
-  const days=e?e.days:(U.afterExSave?[active()?.type].filter(Boolean):[]);
+  const days=e?daysOf(e.id):U.afterExSave==='plan'?[U.planDay]:U.afterExSave?[active()?.type].filter(Boolean):[];
   openSheet(`<h2>${e?'Übung bearbeiten':'Neue Übung'}</h2>
    <label class="f">Name<input class="input" id="ex-name" maxlength="60" autocomplete="off" value="${esc(e?.name||'')}"></label>
    <div class="stack"><span class="sub">Muskelgruppe</span><div class="wrap" id="ex-groups">${S.groups.map(x=>`<button type="button" class="chip ${x.id===g?'on':''}" data-a="exPickG" data-id="${esc(x.id)}" aria-pressed="${x.id===g}"><i class="dot" style="background:${x.color}"></i>${esc(x.name)}</button>`).join('')}</div></div>
@@ -528,8 +552,21 @@ function daysSheet(){
    <div class="stack">${live.map((d,i)=>`<div class="gr d"><input type="color" aria-label="Farbe von ${esc(d.name)}" value="${d.color}" data-in="dcolor" data-id="${d.id}"><input class="input" aria-label="Name" maxlength="24" value="${esc(d.name)}" data-in="dname" data-id="${d.id}"><button class="icon ${i?'':'off'}" data-a="dUp" data-id="${d.id}" aria-label="${esc(d.name)} nach oben">↑</button><button class="icon" data-a="dDel" data-id="${d.id}" aria-label="${esc(d.name)} löschen">×</button></div>`).join('')}</div>
    <p class="err" id="d-err" hidden></p>
    <button class="btn wide" data-a="dAdd">+ Trainingstag</button>
-   <p class="sub" style="font-size:15px">Welche Übungen zu einem Tag gehören, legst du im Tab Übungen fest.</p>
+   <p class="sub" style="font-size:15px">Übungen, Reihenfolge und Sätze je Tag legst du unter Trainingspläne fest.</p>
    ${old.length?`<div class="stack"><h2>Frühere Trainingstage</h2><div class="list">${old.map(d=>`<div class="item" style="min-height:54px">${plate(d.id,true)}<span class="grow t">${esc(d.name)}</span><button class="btn small" data-a="dRestore" data-id="${d.id}">Zurückholen</button></div>`).join('')}</div></div>`:''}`);
+}
+function planSheet(){
+  const ids=dayIds(),id=ids.includes(U.planDay)?U.planDay:ids[0];U.planDay=id;
+  const day=dayOf(id);day.plan=day.plan.filter(p=>ex(p.exerciseId)&&!ex(p.exerciseId).deleted);
+  const used=new Set(day.plan.map(p=>p.exerciseId)),rest=liveEx().filter(e=>!used.has(e.id)).sort(byName);
+  openSheet(`<div class="sheet-x"><h2>Trainingspläne</h2><button class="btn small" data-a="close">Fertig</button></div>
+   <div class="wrap" role="group" aria-label="Trainingstag">${ids.map(x=>`<button class="chip ${x===id?'on':''}" data-a="planDay" data-id="${x}">${dn(x)}</button>`).join('')}</div>
+   <p class="sub" style="font-size:15px">So startet jedes Training ${dn(id)}: diese Übungen in dieser Reihenfolge, mit so vielen leeren Sätzen.</p>
+   ${day.plan.length?`<div>${day.plan.map((p,i)=>{const e=ex(p.exerciseId);return `<div class="pl"><i class="dot" style="background:${grp(e.groupId).color}"></i><span class="t">${esc(e.name)}<small>${p.sets} ${p.sets===1?'Satz':'Sätze'}</small></span>
+     <button class="icon" data-a="plSets" data-i="${i}" data-d="-1" aria-label="${esc(e.name)}: ein Satz weniger" ${p.sets<2?'disabled':''}>−</button><button class="icon" data-a="plSets" data-i="${i}" data-d="1" aria-label="${esc(e.name)}: ein Satz mehr">+</button>
+     <button class="icon ${i?'':'off'}" data-a="plUp" data-i="${i}" aria-label="${esc(e.name)} nach oben">↑</button><button class="icon" data-a="plRm" data-i="${i}" aria-label="${esc(e.name)} aus dem Plan entfernen">×</button></div>`}).join('')}</div>`:'<p class="empty">Dieser Plan hat noch keine Übungen. Füge unten welche hinzu.</p>'}
+   ${rest.length?`<label class="f">Übung zum Plan hinzufügen<select class="input" id="pl-add" data-in="plAdd"><option value="">Übung wählen …</option>${S.groups.map(g=>{const l=rest.filter(e=>e.groupId===g.id);return l.length?`<optgroup label="${esc(g.name)}">${l.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('')}</optgroup>`:''}).join('')}</select></label>`:''}
+   <button class="btn wide" data-a="plNew">+ Neue Übung anlegen</button>`);
 }
 function pickerSheet(){
   const w=active(),used=new Set(w.items.map(i=>i.exerciseId));
@@ -815,10 +852,11 @@ const A={
     if(!name)return fail('Gib der Übung einen Namen.');
     if(!gid)return fail('Wähle eine Muskelgruppe.');
     if(liveEx().some(e=>e.id!==d.id&&e.name.toLowerCase()===name.toLowerCase()))return fail('Diese Übung gibt es schon.');
-    if(d.id){const e=ex(d.id);if(e.name!==name)delete e.example;e.name=name;e.groupId=gid;e.days=days}
+    if(d.id){const e=ex(d.id);if(e.name!==name)delete e.example;e.name=name;e.groupId=gid;setPlanDays(e.id,days)}
     else{
-      const e={id:uid(),name,groupId:gid,days};S.exercises.push(e);
+      const e={id:uid(),name,groupId:gid};S.exercises.push(e);setPlanDays(e.id,days);
       if(U.afterExSave==='add'){U.afterExSave=null;return addToWorkout(e.id)}
+      if(U.afterExSave==='plan'){U.afterExSave=null;if(!dayOf(U.planDay).plan.some(p=>p.exerciseId===e.id))dayOf(U.planDay).plan.push({exerciseId:e.id,sets:3});save();planSheet();render();return}
     }
     save();closeSheet();render();toast('Übung gespeichert');
   },
@@ -826,13 +864,13 @@ const A={
   exDel(d){
     const e=ex(d.id),n=exHistory(e.id).length;
     ask({title:'Übung löschen?',text:n?`${e.name} verschwindet aus deiner Liste. Die ${n} eingetragenen Trainings behalten ihre Sätze.`:`${e.name} wird endgültig gelöscht.`,ok:'Übung löschen'},()=>{
-      if(S.workouts.some(w=>w.items.some(i=>i.exerciseId===e.id)))e.deleted=true;else S.exercises=S.exercises.filter(x=>x!==e);
+      dropFromPlans(e.id);if(S.workouts.some(w=>w.items.some(i=>i.exerciseId===e.id)))e.deleted=true;else S.exercises=S.exercises.filter(x=>x!==e);
       save();closeSheet();render();toast('Übung gelöscht')});
   },
   exClear(){
     const l=liveEx().filter(e=>e.example);
     ask({title:'Beispielübungen löschen?',text:`${l.length} Übungen mit dem Hinweis „Beispiel“ verschwinden. Bereits eingetragene Sätze bleiben erhalten.`,ok:'Beispiele löschen'},()=>{
-      for(const e of l){if(S.workouts.some(w=>w.items.some(i=>i.exerciseId===e.id)))e.deleted=true;else S.exercises=S.exercises.filter(x=>x!==e)}
+      for(const e of l){dropFromPlans(e.id);if(S.workouts.some(w=>w.items.some(i=>i.exerciseId===e.id)))e.deleted=true;else S.exercises=S.exercises.filter(x=>x!==e)}
       save();closeSheet();render();toast('Beispiele gelöscht')});
   },
   exGroup(d){U.exGroup=d.id;render()},exDay(d){U.exDay=d.id;render()},exSort(d){U.exSort=d.id;render()},
@@ -845,11 +883,23 @@ const A={
     S.groups=S.groups.filter(x=>x.id!==d.id);if(U.exGroup===d.id)U.exGroup='all';save();groupsSheet();render();
   },
   days:daysSheet,
+  plans(){U.planDay=U.planDay||nextType();planSheet()},
+  planDay(d){U.planDay=d.id;planSheet()},
+  plSets(d){const p=dayOf(U.planDay).plan[d.i];p.sets=Math.min(20,Math.max(1,p.sets+ +d.d));save();planSheet();render()},
+  plUp(d){const pl=dayOf(U.planDay).plan,i=+d.i;if(i<1)return;[pl[i-1],pl[i]]=[pl[i],pl[i-1]];save();planSheet();render()},
+  plRm(d){dayOf(U.planDay).plan.splice(+d.i,1);save();planSheet();render()},
+  plNew(){U.afterExSave='plan';exForm()},
+  upItem(d){const it=active().items,i=+d.i;if(i<1)return;[it[i-1],it[i]]=[it[i],it[i-1]];save();render()},
+  savePlan(){
+    const w=active(),day=dayOf(w.type),old=day.plan.map(p=>({...p}));
+    day.plan=w.items.filter(it=>!ex(it.exerciseId).deleted).map(it=>({exerciseId:it.exerciseId,sets:Math.min(20,Math.max(1,it.sets.length))}));
+    save();render();toast(`Plan für ${day.name} gespeichert`,()=>{day.plan=old;save();render()});
+  },
   dAdd(){
     let name='Neuer Tag',k=2;
     while(S.days.some(d=>d.name.toLowerCase()===name.toLowerCase()))name=`Neuer Tag ${k++}`;
     const color=DAY_COLORS.find(c=>!S.days.some(d=>d.color===c))||DAY_COLORS[0];
-    S.days.push({id:uid(),name,color});save();daysSheet();render();
+    S.days.push({id:uid(),name,color,plan:[]});save();daysSheet();render();
     const f=[...document.querySelectorAll('[data-in=dname]')].at(-1);f.focus();f.select();
   },
   dUp(d){
@@ -861,8 +911,7 @@ const A={
     const e=$('#d-err'),day=dayOf(d.id);
     if(liveDays().length<2){e.textContent='Mindestens ein Trainingstag muss bleiben.';e.hidden=false;return}
     const n=S.workouts.filter(w=>w.type===d.id).length;
-    ask({title:'Trainingstag löschen?',text:n?`${day.name} verschwindet aus der Auswahl. ${n===1?'Das eingetragene Training bleibt':`Die ${n} eingetragenen Trainings bleiben`} erhalten, auch im Kalender. Du kannst den Tag später zurückholen.`:`${day.name} wird gelöscht. Die zugeordneten Übungen bleiben erhalten.`,ok:'Trainingstag löschen'},()=>{
-      S.exercises.forEach(x=>x.days=x.days.filter(y=>y!==d.id));
+    ask({title:'Trainingstag löschen?',text:n?`${day.name} verschwindet aus der Auswahl. ${n===1?'Das eingetragene Training bleibt':`Die ${n} eingetragenen Trainings bleiben`} erhalten, auch im Kalender. Du kannst den Tag samt Plan später zurückholen.`:`${day.name} wird gelöscht. Die zugeordneten Übungen bleiben erhalten.`,ok:'Trainingstag löschen'},()=>{
       if(n)day.archived=true;else S.days=S.days.filter(x=>x.id!==d.id);
       if(U.exDay===d.id)U.exDay='all';
       save();daysSheet();render();toast('Trainingstag gelöscht');
@@ -952,6 +1001,7 @@ document.addEventListener('change',e=>{
   if(d.in==='prog'){U.progId=v;U.metric=null;render()}
   if(d.in==='gcolor'){grp(d.id).color=v;save();render()}
   if(d.in==='gname'){const n=v.trim();if(n){grp(d.id).name=n;save();render()}else e.target.value=grp(d.id).name}
+  if(d.in==='plAdd'&&v){dayOf(U.planDay).plan.push({exerciseId:v,sets:3});save();planSheet();render()}
   if(d.in==='dcolor'){dayOf(d.id).color=v;save();render()}
   if(d.in==='dname'){
     const n=v.trim(),err=$('#d-err');
